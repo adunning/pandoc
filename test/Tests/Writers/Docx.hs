@@ -12,6 +12,7 @@ import Test.Tasty
 import Test.Tasty.HUnit
 import Tests.Writers.OOXML
 import Text.Pandoc
+import qualified Text.Pandoc.UTF8 as UTF8
 import Text.XML.Light (QName(QName), findAttr, findElements, parseXMLDoc)
 
 -- we add an extra check to make sure that we're not writing in the
@@ -125,6 +126,47 @@ tests = [ testGroup "inlines"
             def
             "docx/link_in_notes.native"
             "docx/golden/link_in_notes.docx"
+          , testCase "first paragraph style is preserved after heading footnote (#11573)" $ do
+              bs <- runIOorExplode $ do
+                setVerbosity ERROR
+                let doc = Pandoc mempty
+                          [ Header 3 ("", [], []) [Str "Heading", Space, Str "without", Space, Str "note"]
+                          , Para [Str "Paragraph", Space, Str "one."]
+                          , Header 3 ("", [], [])
+                            [ Note [Para [Str "note"]]
+                            , Str "Heading"
+                            , Space
+                            , Str "with"
+                            , Space
+                            , Str "note"
+                            ]
+                          , Para [Str "Paragraph", Space, Str "two."]
+                          ]
+                writeDocx def doc
+              let archive = toArchive bs
+              entry <- case findEntryByPath "word/document.xml" archive of
+                Nothing -> assertFailure "Missing word/document.xml in output docx"
+                Just e -> pure e
+              let docXml = Text.pack $ UTF8.toStringLazy (fromEntry entry)
+              let paragraphs = drop 1 $ Text.splitOn "<w:p" docXml
+              let getParagraph txt =
+                    case filter (Text.isInfixOf txt) paragraphs of
+                      [para] -> para
+                      [] -> error ("Missing paragraph for " ++ Text.unpack txt)
+                      _ -> error ("Ambiguous paragraph for " ++ Text.unpack txt)
+              let getStyle para =
+                    case Text.breakOn "w:pStyle w:val=\"" para of
+                      (_, rest)
+                        | Text.null rest -> Nothing
+                        | otherwise ->
+                            let style = Text.takeWhile (/= '"') $
+                                        Text.drop (Text.length ("w:pStyle w:val=\"" :: Text)) rest
+                            in Just style
+              let paraOneStyle = getStyle (getParagraph "Paragraph one.")
+              let paraTwoStyle = getStyle (getParagraph "Paragraph two.")
+              assertEqual "Expected the first paragraphs after both headings to use the same style"
+                paraOneStyle
+                paraTwoStyle
           , docxTest
             "blockquotes"
             def

@@ -743,6 +743,13 @@ formattedRun els = do
   props <- getTextProps
   return $ mknode "w:r" [] $ props ++ els
 
+preservingFirstPara :: PandocMonad m => WS m a -> WS m a
+preservingFirstPara action = do
+  isFirstPara <- gets stFirstPara
+  result <- action
+  modify $ \s -> s { stFirstPara = isFirstPara }
+  pure result
+
 -- | Convert an inline element to OpenXML.
 inlineToOpenXML :: PandocMonad m => WriterOptions -> Inline -> WS m [Content]
 inlineToOpenXML opts il = withDirection $ inlineToOpenXML' opts il
@@ -920,7 +927,8 @@ inlineToOpenXML' opts (Note bs) = do
                                 , envParaProperties = mempty
                                 , envTextProperties = mempty
                                 , envInNote = True })
-              (withParaPropM (pStyleM "Footnote Text") $
+              (preservingFirstPara $
+               withParaPropM (pStyleM "Footnote Text") $
                blocksToOpenXML opts $ insertNoteRef bs)
   let newnote = mknode "w:footnote" [("w:id", notenum)] contents
   modify $ \s -> s{ stFootnotes = newnote : notes }
